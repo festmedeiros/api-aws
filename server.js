@@ -1,6 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
+const cors = require('cors');
+
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: '*'
+}));
+
 //BD
 const mongoose = require('mongoose');
 //swagger
@@ -316,7 +324,7 @@ app.delete('/usuarios/:id', async (req, res) => {
 
 //#region S3
 AWS.config.update({
-    region: 'us-east-1'
+    region: process.env.REGION
     //accessKeyId: process.env.ACCESS_KEY_ID,
     //secretAccessKey: process.env.SECRET_ACCESS_KEY,
     //region: process.env.REGION,

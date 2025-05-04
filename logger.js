@@ -1,10 +1,6 @@
 const AWS = require('aws-sdk');
 AWS.config.update({
-    region: 'us-east-1'
-    //accessKeyId: process.env.ACCESS_KEY_ID,
-    //secretAccessKey: process.env.SECRET_ACCESS_KEY,
-    //region: process.env.REGION,
-    //sessionToken: process.env.SESSION_TOKEN,
+    region: process.env.REGION
 });
 
 const cloudwatchlogs = new AWS.CloudWatchLogs();
