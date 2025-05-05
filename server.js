@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const cors = require('cors');
+const multer = require('multer');
+const multerS3 = require('multer-s3');
 
 app.use(cors({
     origin: '*',
@@ -327,7 +329,6 @@ AWS.config.update({
     region: process.env.REGION
     //accessKeyId: process.env.ACCESS_KEY_ID,
     //secretAccessKey: process.env.SECRET_ACCESS_KEY,
-    //region: process.env.REGION,
     //sessionToken: process.env.SESSION_TOKEN,
 });
 
@@ -414,11 +415,29 @@ app.get('/buckets/:bucketName', async (req, res) => {
  *         description: Arquivo enviado com sucesso
  */
 //Utilizar alguma lib para fazer o upload/strem de arquivos, sugestão: multer
-app.post('/buckets/:bucketName/upload', async (req, res) => {
+// Configuração do multer para armazenar em memória
+const upload = multer({ storage: multer.memoryStorage() });
+app.post('/buckets/:bucketName/upload', upload.single('file'), async (req, res) => {
+    const { bucketName } = req.params;
+    const file = req.file;
+
+    if (!file) {
+        return res.status(400).json({ message: 'Nenhum arquivo enviado.' });
+    }
+
+    const params = {
+        Bucket: bucketName,
+        Key: file.originalname,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+    };
     try {
-        logInfo('Upload efetuado', req, data.Buckets);
+        const data = await s3.upload(params).promise();
+        logInfo('Upload efetuado', req, data);
+        res.status(200).json({ message: 'Upload concluído com sucesso', data });
     } catch (error) {
-        logError("Erro ao efetuar upload", req, error);
+        logError('Erro ao efetuar upload', req, error);
+        res.status(500).json({ message: 'Erro no upload', error: error.message });
     }
 });
 
@@ -451,6 +470,197 @@ app.delete('/buckets/:bucketName/file/:fileName', async (req, res) => {
 });
 //#endregion
 
+//#region MySql
+/**
+ * @swagger
+ * /init-db:
+ *   post:
+ *     summary: Cria o banco de dados e a tabela produto
+ *     responses:
+ *       200:
+ *         description: Banco de dados e tabela criados com sucesso
+ */
+app.post('/init-db', async (req, res) => {
+    try {
+      const createDB = `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`; USE \`${DB_NAME}\`;
+        CREATE TABLE IF NOT EXISTS produto (
+          Id INT AUTO_INCREMENT PRIMARY KEY,
+          Nome VARCHAR(255) NOT NULL,
+          Descricao VARCHAR(255) NOT NULL,
+          Preco DECIMAL(10,2) NOT NULL
+        );`;
+      await pool.query(createDB);
+      res.send('Banco de dados e tabela criados com sucesso.');
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  /**
+   * @swagger
+   * /produtos:
+   *   get:
+   *     summary: Lista todos os produtos
+   *     responses:
+   *       200:
+   *         description: Lista de produtos
+   */
+  app.get('/produtos', async (req, res) => {
+    try {
+      await pool.query(`USE \`${DB_NAME}\``);
+      const [rows] = await pool.query('SELECT * FROM produto');
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  /**
+   * @swagger
+   * /produtos/{id}:
+   *   get:
+   *     summary: Busca um produto pelo ID
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       200:
+   *         description: Produto encontrado
+   *       404:
+   *         description: Produto não encontrado
+   */
+  app.get('/produtos/:id', async (req, res) => {
+    try {
+      await pool.query(`USE \`${DB_NAME}\``);
+      const [rows] = await pool.query('SELECT * FROM produto WHERE id = ?', [req.params.id]);
+      if (rows.length === 0) return res.status(404).json({ error: 'Produto não encontrado' });
+      res.json(rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  /**
+   * @swagger
+   * /produtos:
+   *   post:
+   *     summary: Cria um novo produto
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - Nome
+   *               - Descricao
+   *               - Preco
+   *             properties:
+   *               Nome:
+   *                 type: string
+   *               Descricao:
+   *                 type: string
+   *               Preco:
+   *                 type: number
+   *     responses:
+   *       201:
+   *         description: Produto criado
+   */
+  app.post('/produtos', async (req, res) => {
+    const { Nome, Descricao, Preco } = req.body;
+    try {
+      await pool.query(`USE \`${DB_NAME}\``);
+      const [result] = await pool.query(
+        'INSERT INTO produto (Nome, Descricao, Preco) VALUES (?, ?, ?)',
+        [Nome, Descricao, Preco]
+      );
+      res.status(201).json({ id: result.insertId });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  /**
+   * @swagger
+   * /produtos/{id}:
+   *   put:
+   *     summary: Atualiza um produto
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - Nome
+   *               - Descricao
+   *               - Preco
+   *             properties:
+   *               Nome:
+   *                 type: string
+   *               Descricao:
+   *                 type: string
+   *               Preco:
+   *                 type: number
+   *     responses:
+   *       200:
+   *         description: Produto atualizado
+   *       404:
+   *         description: Produto não encontrado
+   */
+  app.put('/produtos/:id', async (req, res) => {
+    const { Nome, Descricao, Preco } = req.body;
+    try {
+      await pool.query(`USE \`${DB_NAME}\``);
+      const [result] = await pool.query(
+        'UPDATE produto SET Nome = ?, Descricao = ?, Preco = ? WHERE Id = ?',
+        [Nome, Descricao, Preco, req.params.id]
+      );
+      if (result.affectedRows === 0) return res.status(404).json({ error: 'Produto não encontrado' });
+      res.json({ message: 'Produto atualizado com sucesso' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  /**
+   * @swagger
+   * /produtos/{id}:
+   *   delete:
+   *     summary: Deleta um produto
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       200:
+   *         description: Produto deletado com sucesso
+   *       404:
+   *         description: Produto não encontrado
+   */
+  app.delete('/produtos/:id', async (req, res) => {
+    try {
+      await pool.query(`USE \`${DB_NAME}\``);
+      const [result] = await pool.query('DELETE FROM produto WHERE Id = ?', [req.params.id]);
+      if (result.affectedRows === 0) return res.status(404).json({ error: 'Produto não encontrado' });
+      res.json({ message: 'Produto deletado com sucesso' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+//#endregion
 
 swaggerDocs(app);
 app.listen(3000, () => console.log('Servidor rodando na porta 3000'));
